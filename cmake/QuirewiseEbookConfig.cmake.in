@@ -1,0 +1,7 @@
+@PACKAGE_INIT@
+include(CMakeFindDependencyMacro)
+find_dependency(QuirewiseArchive CONFIG)
+find_dependency(QuirewiseData CONFIG)
+find_dependency(QuirewiseText CONFIG)
+include("${CMAKE_CURRENT_LIST_DIR}/QuirewiseEbookTargets.cmake")
+check_required_components(QuirewiseEbook)

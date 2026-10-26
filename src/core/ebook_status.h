@@ -1,0 +1,19 @@
+#ifndef QUIREWISE_EBOOK_STATUS_H
+#define QUIREWISE_EBOOK_STATUS_H
+
+/* Internal parser status values shared by the ebook format adapters. */
+enum {
+    QW_EBOOK_OK = 0,
+    QW_EBOOK_ERR_INVALID_ARGUMENT = -1,
+    QW_EBOOK_ERR_OUT_OF_MEMORY = -2,
+    QW_EBOOK_ERR_IO = -3,
+    QW_EBOOK_ERR_FORMAT = -4,
+    QW_EBOOK_ERR_UNSUPPORTED = -5,
+    QW_EBOOK_ERR_DECODE = -6,
+    QW_EBOOK_ERR_NOT_EBOOK = -7,
+    QW_EBOOK_ERR_EMPTY = -8,
+    QW_EBOOK_ERR_EXTERNAL_DECODER_REQUIRED = -9,
+    QW_EBOOK_ERR_RESOURCE_LIMIT = -11
+};
+
+#endif
