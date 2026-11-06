@@ -4,11 +4,6 @@
 
 #include "epub_native.h"
 
-#if !defined(QUIREWISE_STANDALONE_EPUB)
-#include "../../backends/mupdf_backend.h"
-#include "../../core/platform_unicode.h"
-#include "../../core/workspace.h"
-#endif
 #include "../../core/xml_parser.h"
 #include "../archive/zip_native.h"
 
@@ -17,20 +12,6 @@
 #include <string.h>
 #include <wchar.h>
 #include <ctype.h>
-
-
-
-#if defined(QUIREWISE_WITH_MUPDF) || defined(QUIREWISE_STANDALONE_EPUB)
-#if defined(QUIREWISE_WITH_MUPDF)
-#include <mupdf/fitz.h>
-#include <errno.h>
-
-#if defined(_WIN32)
-#include <windows.h>
-#else
-#include <sys/stat.h>
-#endif
-#endif
 
 enum {
     QW_EPUB_MAX_XML_SIZE = 16 * 1024 * 1024,
@@ -841,137 +822,6 @@ static int epub_layout_requires_legacy(QwXmlNode *nodes, size_t depth)
     return 0;
 }
 
-#if defined(QUIREWISE_WITH_MUPDF)
-static int epub_safe_archive_path(const char *name, size_t name_size,
-                                  char *out_path, size_t capacity,
-                                  int is_directory)
-{
-    size_t input = 0;
-    size_t output = 0;
-    if (!name || !name_size || !out_path || !capacity ||
-        name[0] == '/' || name[0] == '\\') return 0;
-    if (is_directory && name_size && name[name_size - 1u] == '/') --name_size;
-    while (input < name_size) {
-        size_t start = input;
-        size_t length;
-        size_t i;
-        while (input < name_size && name[input] != '/') {
-            if (!name[input] || name[input] == '\\' || name[input] == ':') return 0;
-            ++input;
-        }
-        length = input - start;
-        if (!length || (length == 1u && name[start] == '.') ||
-            (length == 2u && name[start] == '.' && name[start + 1u] == '.')) return 0;
-        if (output && output + 1u >= capacity) return 0;
-        if (output) out_path[output++] = '/';
-        if (length >= capacity - output) return 0;
-        for (i = 0; i < length; ++i) out_path[output++] = name[start + i];
-        if (input < name_size) ++input;
-    }
-    if (!output) return 0;
-    out_path[output] = '\0';
-    return 1;
-}
-
-static int epub_make_directory(const char *path)
-{
-#if defined(_WIN32)
-    wchar_t *wide = qw_platform_utf8_to_wide(path);
-    BOOL created;
-    DWORD attributes;
-    if (!wide) return 0;
-    created = CreateDirectoryW(wide, NULL);
-    attributes = GetFileAttributesW(wide);
-    free(wide);
-    return created || (attributes != INVALID_FILE_ATTRIBUTES &&
-                       (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0);
-#else
-    struct stat status;
-    if (mkdir(path, 0700) == 0) return 1;
-    return errno == EEXIST && stat(path, &status) == 0 && S_ISDIR(status.st_mode);
-#endif
-}
-
-static int epub_make_parent_directories(const char *root, const char *relative)
-{
-    char path[QW_WORKSPACE_PATH_CAP];
-    char prefix[QW_WORKSPACE_PATH_CAP];
-    size_t i;
-    size_t prefix_size = 0;
-    for (i = 0; relative[i]; ++i) {
-        if (relative[i] == '/') {
-            if (!prefix_size || prefix_size + 1u >= sizeof(prefix)) return 0;
-            prefix[prefix_size] = '\0';
-            if (!qw_workspace_path_join(path, sizeof(path), root, prefix) ||
-                !epub_make_directory(path)) return 0;
-        } else {
-            if (prefix_size + 1u >= sizeof(prefix)) return 0;
-            prefix[prefix_size++] = relative[i];
-        }
-    }
-    return 1;
-}
-
-static int epub_write_member(QwZipArchive *zip, size_t index,
-                             const char *root, size_t *remaining)
-{
-    QwZipEntry *entry = &zip->entries[index];
-    char relative[QW_WORKSPACE_PATH_CAP];
-    char path[QW_WORKSPACE_PATH_CAP];
-    QwZipEntryInfo info;
-    void *bytes = NULL;
-    size_t size = 0;
-    FILE *file = NULL;
-    uint32_t unix_mode = entry->external_attributes >> 16;
-    uint32_t file_type = unix_mode & 0170000u;
-    int is_directory = entry->is_directory;
-    int rc = 0;
-    if (file_type == 0120000u ||
-        (file_type && file_type != 0100000u && file_type != 0040000u)) return 1;
-    if (file_type == 0040000u) is_directory = 1;
-    if (!epub_safe_archive_path(entry->name, entry->name_size,
-                                relative, sizeof(relative), is_directory)) return 1;
-    if (!epub_make_parent_directories(root, relative) ||
-        !qw_workspace_path_join(path, sizeof(path), root, relative)) return 0;
-    if (is_directory) return epub_make_directory(path);
-    if (!qw_zip_reader_file_stat(zip, index, &info) ||
-        info.uncompressed_size > *remaining ||
-        !qw_zip_reader_is_file_supported(zip, index)) return 1;
-    bytes = qw_zip_reader_extract_to_heap(zip, index, &size, 0u);
-    if (!bytes || size != info.uncompressed_size) goto done;
-    file = qw_workspace_open_exclusive_file(path);
-    if (!file) goto done;
-    if (size && fwrite(bytes, 1u, size, file) != size) goto done;
-    if (fclose(file) != 0) {
-        file = NULL;
-        goto done;
-    }
-    file = NULL;
-    *remaining -= size;
-    rc = 1;
-
-done:
-    if (file) fclose(file);
-    free(bytes);
-    return rc;
-}
-
-static int epub_extract_archive(QwZipArchive *zip, const char *root)
-{
-    size_t remaining = QW_EPUB_TOTAL_EXTRACT_LIMIT;
-    size_t i;
-    for (i = 0; i < zip->count; ++i) {
-        if (!epub_write_member(zip, i, root, &remaining)) return 0;
-    }
-    return 1;
-}
-
-static int epub_path_in_workspace(const char *workspace, const char *relative,
-                                  char *out_path, size_t capacity)
-{
-    return qw_workspace_path_join(out_path, capacity, workspace, relative);
-}
-#endif
 
 int qw_epub_native_open_layout(const void *data, size_t size,
                                QwInputFormat input_format,
@@ -1001,15 +851,9 @@ int qw_epub_native_open_layout(const void *data, size_t size,
     }
     memset(out_document, 0, sizeof(*out_document));
     memset(&zip, 0, sizeof(zip));
-#ifdef QUIREWISE_STANDALONE_EPUB
     if (!qw_zip_reader_init_mem_with_profile(
             &zip, data, size, 0u,
             QW_FORMAT_INPUT_RESOURCE_PROFILE_DOCUMENT_ARCHIVE)) {
-#else
-    if (!qw_zip_reader_init_mem_with_profile(
-            &zip, data, size, 0u,
-            qw_format_resource_profile_get(input_format))) {
-#endif
         return epub_set_error(report, QW_EBOOK_ERR_FORMAT,
                               "EPUB package is not a supported ZIP archive");
     }
@@ -1152,188 +996,9 @@ cleanup:
     return rc;
 }
 
-#if defined(QUIREWISE_WITH_MUPDF)
-int qw_epub_native_convert(const void *data, size_t size,
-                           const QwConvertOptions *options,
-                           uint8_t **out_pdf, size_t *out_size,
-                           QwConvertReport *report)
-{
-    QwZipArchive zip;
-    QwEpubSpine spine = {0};
-    fz_context *ctx = NULL;
-    QwXmlNode *container_xml = NULL;
-    QwXmlNode *opf_xml = NULL;
-    void *container_data = NULL;
-    void *opf_data = NULL;
-    size_t container_size = 0;
-    size_t opf_size = 0;
-    char *opf_path = NULL;
-    char workspace[QW_WORKSPACE_PATH_CAP] = {0};
-    uint8_t **chapter_pdfs = NULL;
-    size_t *chapter_sizes = NULL;
-    uint8_t *merged_pdf = NULL;
-    size_t merged_size = 0;
-    size_t merged_pages = 0;
-    size_t i;
-    int archive_open = 0;
-    int rc = QW_EBOOK_ERR_FORMAT;
-    (void)options;
-    if (!data || !size || !out_pdf || !out_size) return QW_EBOOK_ERR_INVALID_ARGUMENT;
-    *out_pdf = NULL;
-    *out_size = 0;
-    memset(&zip, 0, sizeof(zip));
-    if (!qw_zip_reader_init_mem_with_profile(
-            &zip, data, size, 0u,
-            qw_format_resource_profile_get(QW_FORMAT_EPUB))) {
-        return epub_set_error(report, QW_EBOOK_ERR_FORMAT,
-                              "EPUB package could not be opened by Quirewise ZIP");
-    }
-    archive_open = 1;
-    container_data = epub_extract_named(&zip, "META-INF/container.xml",
-                                        &container_size);
-    if (!container_data || !container_size ||
-        container_size > QW_EPUB_MAX_XML_SIZE) {
-        rc = epub_set_error(report, QW_EBOOK_ERR_FORMAT,
-                            "EPUB META-INF/container.xml is missing or too large");
-        goto cleanup;
-    }
-    ctx = fz_new_context(NULL, NULL, FZ_STORE_DEFAULT);
-    if (!ctx) {
-        rc = epub_set_error(report, QW_EBOOK_ERR_OUT_OF_MEMORY,
-                            "Could not create EPUB XML context");
-        goto cleanup;
-    }
-    container_xml = epub_parse_xml(ctx, (const uint8_t *)container_data,
-                                   container_size);
-    if (!container_xml) {
-        rc = epub_set_error(report, QW_EBOOK_ERR_FORMAT,
-                            "EPUB container.xml could not be parsed");
-        goto cleanup;
-    }
-    {
-        QwXmlNode *rootfile = epub_find_descendant(qw_xml_root(container_xml),
-                                                "rootfile", 0u);
-        const char *full_path = rootfile ? qw_xml_att(rootfile, "full-path") : NULL;
-        if (full_path) opf_path = epub_resolve_href("", full_path);
-    }
-    qw_xml_drop(container_xml);
-    container_xml = NULL;
-    if (!opf_path) {
-        rc = epub_set_error(report, QW_EBOOK_ERR_FORMAT,
-                            "EPUB root package path is missing or invalid");
-        goto cleanup;
-    }
-    opf_data = epub_extract_named(&zip, opf_path, &opf_size);
-    if (!opf_data || !opf_size || opf_size > QW_EPUB_MAX_XML_SIZE) {
-        rc = epub_set_error(report, QW_EBOOK_ERR_FORMAT,
-                            "EPUB OPF package is missing, unsupported, or too large");
-        goto cleanup;
-    }
-    opf_xml = epub_parse_xml(ctx, (const uint8_t *)opf_data, opf_size);
-    if (!opf_xml || !epub_collect_spine(qw_xml_root(opf_xml), opf_path, &spine)) {
-        rc = epub_set_error(report, QW_EBOOK_ERR_FORMAT,
-                            "EPUB OPF manifest or reading order is invalid");
-        goto cleanup;
-    }
-    if (!qw_workspace_create(workspace, sizeof(workspace), "epub")) {
-        rc = epub_set_error(report, QW_EBOOK_ERR_IO,
-                            "Could not create a private EPUB extraction directory");
-        goto cleanup;
-    }
-    if (!epub_extract_archive(&zip, workspace)) {
-        rc = epub_set_error(report, QW_EBOOK_ERR_IO,
-                            "EPUB archive members could not be safely extracted");
-        goto cleanup;
-    }
-    chapter_pdfs = (uint8_t **)calloc(spine.count, sizeof(*chapter_pdfs));
-    chapter_sizes = (size_t *)calloc(spine.count, sizeof(*chapter_sizes));
-    if (!chapter_pdfs || !chapter_sizes) {
-        rc = epub_set_error(report, QW_EBOOK_ERR_OUT_OF_MEMORY,
-                            "Could not allocate EPUB chapter output table");
-        goto cleanup;
-    }
-    for (i = 0; i < spine.count; ++i) {
-        char chapter_path[QW_WORKSPACE_PATH_CAP];
-        if (!epub_path_in_workspace(workspace, spine.items[i].path,
-                                    chapter_path, sizeof(chapter_path))) {
-            rc = epub_set_error(report, QW_EBOOK_ERR_FORMAT,
-                                "EPUB chapter path exceeds the local path limit");
-            goto cleanup;
-        }
-        rc = qw_mupdf_convert_html_file(chapter_path, &chapter_pdfs[i],
-                                        &chapter_sizes[i], report);
-        if (rc != QW_EBOOK_OK || !chapter_pdfs[i] || !chapter_sizes[i]) {
-            if (report && !report->note[0]) {
-                (void)snprintf(report->note, sizeof(report->note),
-                               "EPUB spine chapter %lu could not be rendered",
-                               (unsigned long)i + 1u);
-            }
-            rc = QW_EBOOK_ERR_DECODE;
-            goto cleanup;
-        }
-    }
-    if (spine.count == 1u) {
-        merged_pdf = chapter_pdfs[0];
-        merged_size = chapter_sizes[0];
-        chapter_pdfs[0] = NULL;
-    } else {
-        rc = qw_mupdf_merge_pdf_documents((const uint8_t *const *)chapter_pdfs,
-                                          chapter_sizes, spine.count,
-                                          &merged_pdf, &merged_size,
-                                          &merged_pages, report);
-        if (rc != QW_EBOOK_OK) goto cleanup;
-    }
-    *out_pdf = merged_pdf;
-    *out_size = merged_size;
-    merged_pdf = NULL;
-    rc = QW_EBOOK_OK;
-    if (report) {
-        (void)snprintf(report->note, sizeof(report->note),
-                       "EPUB ZIP package parsed by Quirewise; %lu spine item(s) rendered from extracted XHTML",
-                       (unsigned long)spine.count);
-    }
-
-cleanup:
-    free(merged_pdf);
-    if (chapter_pdfs) {
-        for (i = 0; i < spine.count; ++i) free(chapter_pdfs[i]);
-    }
-    free(chapter_pdfs);
-    free(chapter_sizes);
-    epub_spine_free(&spine);
-    free(opf_path);
-    free(opf_data);
-    free(container_data);
-    if (ctx) {
-        qw_xml_drop(opf_xml);
-        qw_xml_drop(container_xml);
-        fz_drop_context(ctx);
-    }
-    if (archive_open) qw_zip_reader_end(&zip);
-    return rc;
-}
-#endif
-
-#else
-
-int qw_epub_native_open_layout(const void *data, size_t size,
-                               QwInputFormat input_format,
-                               const QwConvertOptions *options,
-                               QwLayoutDocument *out_document,
-                               QwConvertReport *report)
-{
-    (void)data;
-    (void)size;
-    (void)input_format;
-    (void)options;
-    if (out_document) memset(out_document, 0, sizeof(*out_document));
-    if (report) {
-        (void)snprintf(report->note, sizeof(report->note),
-                       "EPUB structured layout requires the statically linked MuPDF XML backend");
-    }
-    return QW_EBOOK_ERR_UNSUPPORTED;
-}
-
+/* PDF emission is intentionally not implemented here: the EPUB library only
+ * produces structured layout. Layout-to-PDF conversion belongs to the internal
+ * layout/PDF renderer, which is not part of this package. */
 int qw_epub_native_convert(const void *data, size_t size,
                            const QwConvertOptions *options,
                            uint8_t **out_pdf, size_t *out_size,
@@ -1346,9 +1011,7 @@ int qw_epub_native_convert(const void *data, size_t size,
     if (out_size) *out_size = 0;
     if (report) {
         (void)snprintf(report->note, sizeof(report->note),
-                       "EPUB rendering requires the statically linked MuPDF HTML backend");
+                       "EPUB to PDF requires the internal Quirewise layout/PDF renderer, which is not available in this package");
     }
     return QW_EBOOK_ERR_UNSUPPORTED;
 }
-
-#endif

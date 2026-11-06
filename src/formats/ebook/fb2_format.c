@@ -195,31 +195,24 @@ int qw_fb2_probe_native(const void *data, size_t size)
 }
 
 #ifndef QUIREWISE_STANDALONE_FB2_PARSER
+/* PDF emission is intentionally not implemented in this package: the ebook
+ * library only produces structured layout. Layout-to-PDF conversion belongs to
+ * the internal Quirewise layout/PDF renderer. */
 static int fb2_convert_to_pdf(const void *data, size_t size,
                               const QwConvertOptions *options,
                               uint8_t **out_pdf, size_t *out_size,
                               QwConvertReport *report)
 {
-    QwLayoutDocument layout;
-    int rc;
-    if (!out_pdf || !out_size) return QW_EBOOK_ERR_INVALID_ARGUMENT;
-    *out_pdf = NULL;
-    *out_size = 0u;
-    memset(&layout, 0, sizeof(layout));
-    rc = qw_fb2_native_open_layout(data, size, QW_FORMAT_FB2, options,
-                                   &layout, report);
-    if (rc != QW_EBOOK_OK) goto fb2_done;
-    if (!layout.html_utf8 || !layout.html_size) {
-        rc = QW_EBOOK_ERR_FORMAT;
-        if (report) snprintf(report->note, sizeof(report->note),
-                             "FictionBook parser returned no HTML layout");
-        goto fb2_done;
+    (void)data;
+    (void)size;
+    (void)options;
+    if (out_pdf) *out_pdf = NULL;
+    if (out_size) *out_size = 0u;
+    if (report) {
+        (void)snprintf(report->note, sizeof(report->note),
+                       "FB2 to PDF requires the internal Quirewise layout/PDF renderer, which is not available in this package");
     }
-    rc = qw_mupdf_convert_html((const char *)layout.html_utf8,
-                               layout.html_size, out_pdf, out_size, report);
-fb2_done:
-    if (layout.dispose && layout.context) layout.dispose(layout.context);
-    return rc;
+    return QW_EBOOK_ERR_UNSUPPORTED;
 }
 
 
