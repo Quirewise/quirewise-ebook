@@ -224,7 +224,6 @@ int qw_fb2_native_open_layout(const void *data, size_t size,
     if (!data || !size || input_format != QW_FORMAT_FB2)
         return QW_EBOOK_ERR_INVALID_ARGUMENT;
 
-    html.capacity = 1024u;
     html.limit = 64u * 1024u * 1024u + 1u;
     xml = qw_xml_parse(data, size, NULL);
     if (!xml) {
