@@ -2,7 +2,6 @@
 #include "fb2_format.h"
 
 #ifndef QUIREWISE_STANDALONE_FB2_PARSER
-#include "../../backends/mupdf_backend.h"
 #endif
 
 #include <stddef.h>
