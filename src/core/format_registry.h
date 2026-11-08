@@ -1,7 +1,7 @@
 #ifndef QUIREWISE_FORMAT_REGISTRY_INTERNAL_H
 #define QUIREWISE_FORMAT_REGISTRY_INTERNAL_H
 
-#include "quirewise/convert.h"
+#include "quirewise/format.h"
 #include "quirewise/document.h"
 #include "ebook_status.h"
 #include "data_document.h"
