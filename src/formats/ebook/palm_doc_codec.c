@@ -1,15 +1,25 @@
 #include "mobi_internal.h"
 
+/* PalmDOC records are slices of one continuous text stream: a back-reference
+ * in record N may point into the bytes produced by record N-1. The decoder
+ * therefore writes at `output_start` and treats output[0, output_start) as
+ * history instead of resetting the window for every record. */
 int qw_palm_doc_decode_record(const uint8_t *data, size_t size,
-                              uint8_t *output, size_t output_capacity,
-                              size_t *out_size)
+                              uint8_t *output, size_t output_start,
+                              size_t output_capacity, size_t *out_size)
 {
     size_t input_position = 0u;
-    size_t output_position = 0u;
+    size_t output_position = output_start;
     if ((!data && size) || !output || !out_size) return 0;
+    if (output_start > output_capacity) return 0;
     *out_size = 0u;
     while (input_position < size) {
-        uint8_t value = data[input_position++];
+        uint8_t value;
+        /* PalmDOC record payloads may carry a trailing pad byte after the
+         * decoded record is full; the record size, not the input length,
+         * defines where the payload ends. */
+        if (output_position >= output_capacity) break;
+        value = data[input_position++];
         if (value == 0u || (value >= 0x09u && value <= 0x7fu)) {
             if (output_position >= output_capacity) return 0;
             output[output_position++] = value;
@@ -39,6 +49,6 @@ int qw_palm_doc_decode_record(const uint8_t *data, size_t size,
             output[output_position++] = (uint8_t)(value ^ 0x80u);
         }
     }
-    *out_size = output_position;
+    *out_size = output_position - output_start;
     return 1;
 }

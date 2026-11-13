@@ -56,5 +56,13 @@ if(BUILD_TESTING)
     target_link_libraries(quirewise_ebook_fuzz_smoke PRIVATE Quirewise::Ebook)
     add_test(NAME quirewise_ebook_fuzz_smoke
         COMMAND quirewise_ebook_fuzz_smoke)
+
+    add_executable(quirewise_ebook_mobi_palm_doc_test
+        tests/mobi_palm_doc_test.c)
+    target_compile_features(quirewise_ebook_mobi_palm_doc_test PRIVATE c_std_11)
+    target_link_libraries(quirewise_ebook_mobi_palm_doc_test
+        PRIVATE Quirewise::Ebook)
+    add_test(NAME quirewise_ebook_mobi_palm_doc
+        COMMAND quirewise_ebook_mobi_palm_doc_test)
 endif()
 target_link_libraries(quirewise_ebook PUBLIC Quirewise::Runtime)

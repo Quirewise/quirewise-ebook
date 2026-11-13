@@ -230,7 +230,8 @@ int qw_mobi_parse_palm_doc(const void *input, size_t size,
             memcpy(text + text_position, data + start, packed_size);
             decoded_size = packed_size;
         } else if (!qw_palm_doc_decode_record(data + start, end - start,
-                                              text + text_position, capacity,
+                                              text, text_position,
+                                              text_position + capacity,
                                               &decoded_size)) {
             goto done;
         }
